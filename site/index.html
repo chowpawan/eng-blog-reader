@@ -79,9 +79,8 @@
     <h1>Engineering Reader</h1>
     <div id="sources"></div>
     <div class="side-actions">
-      <button class="btn" id="refresh">Check for new posts</button>
-      <button class="btn" id="backfill" title="Pages back through each blog's archive">Fetch old posts</button>
-      <div class="status" id="status"></div>
+      <div class="status" id="status">Loading posts…</div>
+      <a class="status" href="https://github.com/chowpawan/eng-blog-reader">Source on GitHub</a>
     </div>
   </aside>
   <main>
@@ -101,60 +100,76 @@
   </main>
 </div>
 <script>
-const state = { source: "", filter: "", q: "", year: "", offset: 0 };
+const state = { source: "", filter: "", q: "", year: "", shown: 0 };
 const names = {};
+let sources = [], posts = [], matches = [];
 const $ = id => document.getElementById(id);
 const esc = s => (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const api = (path, body) => fetch(path, body ? { method: "POST", headers: {"Content-Type": "application/json"},
-  body: JSON.stringify(body) } : {}).then(r => r.json());
+
+// Read/saved state lives in this browser only.
+function loadSet(key) { try { return new Set(JSON.parse(localStorage.getItem(key) || "[]")); } catch { return new Set(); } }
+function saveSet(key, set) { try { localStorage.setItem(key, JSON.stringify([...set])); } catch {} }
+const read = loadSet("read"), saved = loadSet("saved");
 
 function fmtDate(iso) {
   if (!iso) return "";
   return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-async function loadSources() {
-  const { sources, years } = await api("/api/sources");
-  const all = sources.reduce((a, s) => ({ total: a.total + s.total, unread: a.unread + s.unread }), { total: 0, unread: 0 });
-  const btn = (id, name, s) => `<button class="src ${state.source === id ? "active" : ""}" data-id="${id}"
+function renderSources() {
+  const stats = {};
+  for (const p of posts) {
+    const s = stats[p.s] || (stats[p.s] = { total: 0, unread: 0, oldest: p.p });
+    s.total++; if (!read.has(p.u)) s.unread++;
+    if (p.p && (!s.oldest || p.p < s.oldest)) s.oldest = p.p;
+  }
+  const all = { total: posts.length, unread: posts.filter(p => !read.has(p.u)).length };
+  const btn = (id, name, s = {}) => `<button class="src ${state.source === id ? "active" : ""}" data-id="${id}"
       title="${s.oldest ? "Back to " + fmtDate(s.oldest) : ""}">
-      <span>${esc(name)}</span><span class="n">${s.unread ? s.unread + " / " : ""}${s.total}</span></button>`;
-  $("sources").innerHTML = btn("", "All companies", all) + sources.map(s => (names[s.id] = s.name, btn(s.id, s.name, s))).join("");
-  const sel = $("year"), cur = sel.value;
-  sel.innerHTML = '<option value="">All years</option>' + years.map(y => `<option>${y}</option>`).join("");
-  sel.value = cur;
+      <span>${esc(name)}</span><span class="n">${s.unread ? s.unread + " / " : ""}${s.total || 0}</span></button>`;
+  $("sources").innerHTML = btn("", "All companies", all) + sources.map(s => btn(s.id, s.name, stats[s.id])).join("");
 }
 
 function postHTML(p) {
-  return `<div class="post ${p.is_read ? "read" : ""}" data-id="${p.id}">
+  const isRead = read.has(p.u), isSaved = saved.has(p.u);
+  return `<div class="post ${isRead ? "read" : ""}" data-url="${esc(p.u)}">
     <div class="body">
-      <div class="top"><span class="co">${esc(names[p.source] || p.source)}</span>
-        <span>${fmtDate(p.published)}</span>${p.author ? `<span>· ${esc(p.author)}</span>` : ""}</div>
-      <a class="title" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
-      ${p.summary ? `<p>${esc(p.summary)}</p>` : ""}
+      <div class="top"><span class="co">${esc(names[p.s] || p.s)}</span>
+        <span>${fmtDate(p.p)}</span>${p.a ? `<span>· ${esc(p.a)}</span>` : ""}</div>
+      <a class="title" href="${esc(p.u)}" target="_blank" rel="noopener">${esc(p.t)}</a>
+      ${p.d ? `<p>${esc(p.d)}</p>` : ""}
     </div>
     <div class="icons">
-      <button class="icon ${p.saved ? "on" : ""}" data-act="saved" title="Save for later">${p.saved ? "★" : "☆"}</button>
-      <button class="icon" data-act="read" title="Toggle read">${p.is_read ? "●" : "○"}</button>
+      <button class="icon ${isSaved ? "on" : ""}" data-act="saved" title="Save for later">${isSaved ? "★" : "☆"}</button>
+      <button class="icon" data-act="read" title="Toggle read">${isRead ? "●" : "○"}</button>
     </div></div>`;
 }
 
-async function loadPosts(append = false) {
-  if (!append) state.offset = 0;
-  const qs = new URLSearchParams({ source: state.source, filter: state.filter, q: state.q,
-    year: state.year, offset: state.offset, limit: 50 });
-  const { total, posts } = await api("/api/posts?" + qs);
-  const html = posts.map(postHTML).join("");
-  if (append) $("list").insertAdjacentHTML("beforeend", html);
-  else $("list").innerHTML = html || `<div class="empty">No posts here yet. ${total === 0 && !state.q ?
-      "Click “Check for new posts” — the first fetch takes a minute." : ""}</div>`;
-  state.offset += posts.length;
-  $("count").textContent = `${total.toLocaleString()} posts`;
-  $("more").hidden = state.offset >= total;
+function filterPosts() {
+  const terms = state.q.toLowerCase().split(/\s+/).filter(Boolean);
+  matches = posts.filter(p =>
+    (!state.source || p.s === state.source) &&
+    (!state.year || (p.p || "").startsWith(state.year)) &&
+    (state.filter !== "unread" || !read.has(p.u)) &&
+    (state.filter !== "saved" || saved.has(p.u)) &&
+    terms.every(t => p._text.includes(t)));
 }
 
-async function mark(el, field, value) {
-  await api("/api/mark", { id: +el.dataset.id, field, value });
+function renderPosts(append = false) {
+  if (!append) { filterPosts(); state.shown = 0; }
+  const page = matches.slice(state.shown, state.shown + 50);
+  const html = page.map(postHTML).join("");
+  if (append) $("list").insertAdjacentHTML("beforeend", html);
+  else $("list").innerHTML = html || `<div class="empty">No posts match.</div>`;
+  state.shown += page.length;
+  $("count").textContent = `${matches.length.toLocaleString()} posts`;
+  $("more").hidden = state.shown >= matches.length;
+}
+
+function mark(el, field, value) {
+  const url = el.dataset.url, set = field === "read" ? read : saved;
+  value ? set.add(url) : set.delete(url);
+  saveSet(field, set);
   if (field === "read") {
     el.classList.toggle("read", value);
     el.querySelector('[data-act="read"]').textContent = value ? "●" : "○";
@@ -162,7 +177,7 @@ async function mark(el, field, value) {
     const b = el.querySelector('[data-act="saved"]');
     b.classList.toggle("on", value); b.textContent = value ? "★" : "☆";
   }
-  loadSources();
+  renderSources();
 }
 
 $("list").addEventListener("click", e => {
@@ -182,37 +197,38 @@ $("sources").addEventListener("click", e => {
   if (!b) return;
   state.source = b.dataset.id;
   $("side").classList.remove("open");
-  loadSources(); loadPosts();
+  renderSources(); renderPosts();
 });
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
-  state.filter = t.dataset.f; loadPosts();
+  state.filter = t.dataset.f; renderPosts();
 });
 let timer;
-$("q").oninput = e => { clearTimeout(timer); timer = setTimeout(() => { state.q = e.target.value.trim(); loadPosts(); }, 250); };
-$("year").onchange = e => { state.year = e.target.value; loadPosts(); };
-$("more").onclick = () => loadPosts(true);
+$("q").oninput = e => { clearTimeout(timer); timer = setTimeout(() => { state.q = e.target.value.trim(); renderPosts(); }, 200); };
+$("year").onchange = e => { state.year = e.target.value; renderPosts(); };
+$("more").onclick = () => renderPosts(true);
 $("menu").onclick = () => $("side").classList.toggle("open");
-$("markall").onclick = async () => {
+$("markall").onclick = () => {
   const where = state.source ? names[state.source] : "every company";
   if (!confirm(`Mark all posts from ${where} as read?`)) return;
-  await api("/api/mark", { field: "read", all_unread: true, source: state.source });
-  loadSources(); loadPosts();
+  posts.forEach(p => { if (!state.source || p.s === state.source) read.add(p.u); });
+  saveSet("read", read);
+  renderSources(); renderPosts();
 };
-$("refresh").onclick = () => api("/api/refresh", {}).then(pollStatus);
-$("backfill").onclick = () => api("/api/backfill", {}).then(pollStatus);
 
-let wasRunning = false;
-async function pollStatus() {
-  const s = await api("/api/status");
-  $("status").textContent = s.message + (s.last_refresh && !s.running ? ` · last check ${new Date(s.last_refresh).toLocaleTimeString()}` : "");
-  $("refresh").disabled = $("backfill").disabled = !!s.running;
-  if (s.running) { wasRunning = true; loadSources(); setTimeout(pollStatus, 1500); }
-  else if (wasRunning) { wasRunning = false; loadSources(); loadPosts(); }
-}
-
-loadSources().then(() => loadPosts());
-pollStatus();
+fetch("posts.json", { cache: "no-cache" }).then(r => r.json()).then(data => {
+  sources = data.sources;
+  sources.forEach(s => names[s.id] = s.name);
+  posts = data.posts;
+  posts.forEach(p => p._text = `${p.t} ${p.d} ${p.a}`.toLowerCase());
+  const years = [...new Set(posts.map(p => (p.p || "").slice(0, 4)).filter(Boolean))].sort().reverse();
+  $("year").insertAdjacentHTML("beforeend", years.map(y => `<option>${y}</option>`).join(""));
+  $("status").textContent = `Updated ${new Date(data.generated).toLocaleString()}`;
+  renderSources(); renderPosts();
+}).catch(() => {
+  $("status").textContent = "Couldn't load posts.json";
+  $("list").innerHTML = '<div class="empty">No posts yet. Run <code>python3 app.py update</code>.</div>';
+});
 </script>
 </body>
 </html>
