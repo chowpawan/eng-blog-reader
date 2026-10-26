@@ -1,0 +1,4 @@
+posts.db
+posts.db-*
+__pycache__/
+.DS_Store

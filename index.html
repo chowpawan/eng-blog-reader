@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engineering Reader</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e4e4e0;
+    --accent: #2f6fde; --accent-soft: #e8effc; --read: #9a9aa0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141416; --panel: #1c1c1f; --text: #ececee; --muted: #9a9aa2; --line: #2c2c31;
+      --accent: #6d9bff; --accent-soft: #1f2a40; --read: #6a6a72;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .app { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+  aside { border-right: 1px solid var(--line); padding: 20px 12px; position: sticky; top: 0;
+          height: 100vh; overflow-y: auto; background: var(--panel); }
+  aside h1 { font-size: 16px; margin: 0 8px 16px; }
+  .src { display: flex; justify-content: space-between; width: 100%; border: 0; background: none;
+         color: var(--text); padding: 7px 10px; border-radius: 7px; cursor: pointer; font: inherit; text-align: left; }
+  .src:hover { background: var(--bg); }
+  .src.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .src .n { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .src.active .n { color: var(--accent); }
+  .side-actions { margin-top: 20px; display: grid; gap: 8px; padding: 0 4px; }
+  button.btn { border: 1px solid var(--line); background: var(--panel); color: var(--text);
+               padding: 7px 12px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 13px; }
+  button.btn:hover { border-color: var(--accent); }
+  button.btn:disabled { opacity: .5; cursor: default; }
+  .status { font-size: 12px; color: var(--muted); padding: 4px; min-height: 18px; }
+  main { padding: 20px 28px; max-width: 900px; width: 100%; }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .toolbar input, .toolbar select { font: inherit; padding: 8px 12px; border: 1px solid var(--line);
+               border-radius: 8px; background: var(--panel); color: var(--text); }
+  .toolbar input { flex: 1; min-width: 200px; }
+  .tabs { display: flex; gap: 4px; }
+  .tab { border: 0; background: none; color: var(--muted); padding: 6px 10px; border-radius: 7px;
+         cursor: pointer; font: inherit; }
+  .tab.active { background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+  .meta-line { color: var(--muted); font-size: 13px; margin: 6px 0 14px; display: flex; justify-content: space-between; }
+  .meta-line a { color: var(--accent); cursor: pointer; }
+  .post { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 14px 16px; margin-bottom: 10px; display: flex; gap: 12px; }
+  .post .body { flex: 1; min-width: 0; }
+  .post .top { font-size: 12px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
+  .post .co { color: var(--accent); font-weight: 600; }
+  .post a.title { display: block; color: var(--text); font-weight: 600; font-size: 16px;
+                  text-decoration: none; margin: 3px 0; overflow-wrap: anywhere; }
+  .post a.title:hover { color: var(--accent); }
+  .post p { margin: 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+  .post.read a.title { color: var(--read); font-weight: 500; }
+  .icons { display: flex; flex-direction: column; gap: 4px; }
+  .icon { border: 0; background: none; cursor: pointer; color: var(--muted); font-size: 16px;
+          width: 30px; height: 30px; border-radius: 6px; }
+  .icon:hover { background: var(--bg); color: var(--text); }
+  .icon.on { color: #e3a008; }
+  .empty { text-align: center; color: var(--muted); padding: 60px 20px; }
+  #more { display: block; margin: 16px auto 40px; }
+  .menu-btn { display: none; }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; }
+    aside { position: fixed; inset: 0 30% 0 0; z-index: 10; transform: translateX(-100%);
+            transition: transform .2s; box-shadow: 0 0 30px rgba(0,0,0,.2); }
+    aside.open { transform: none; }
+    main { padding: 16px; }
+    .menu-btn { display: inline-block; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside id="side">
+    <h1>Engineering Reader</h1>
+    <div id="sources"></div>
+    <div class="side-actions">
+      <button class="btn" id="refresh">Check for new posts</button>
+      <button class="btn" id="backfill" title="Pages back through each blog's archive">Fetch old posts</button>
+      <div class="status" id="status"></div>
+    </div>
+  </aside>
+  <main>
+    <div class="toolbar">
+      <button class="btn menu-btn" id="menu">☰</button>
+      <input id="q" type="search" placeholder="Search titles, summaries, authors…">
+      <select id="year"><option value="">All years</option></select>
+      <div class="tabs">
+        <button class="tab active" data-f="">All</button>
+        <button class="tab" data-f="unread">Unread</button>
+        <button class="tab" data-f="saved">Saved</button>
+      </div>
+    </div>
+    <div class="meta-line"><span id="count"></span><a id="markall">Mark all as read</a></div>
+    <div id="list"></div>
+    <button class="btn" id="more" hidden>Load more</button>
+  </main>
+</div>
+<script>
+const state = { source: "", filter: "", q: "", year: "", offset: 0 };
+const names = {};
+const $ = id => document.getElementById(id);
+const esc = s => (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const api = (path, body) => fetch(path, body ? { method: "POST", headers: {"Content-Type": "application/json"},
+  body: JSON.stringify(body) } : {}).then(r => r.json());
+
+function fmtDate(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+async function loadSources() {
+  const { sources, years } = await api("/api/sources");
+  const all = sources.reduce((a, s) => ({ total: a.total + s.total, unread: a.unread + s.unread }), { total: 0, unread: 0 });
+  const btn = (id, name, s) => `<button class="src ${state.source === id ? "active" : ""}" data-id="${id}"
+      title="${s.oldest ? "Back to " + fmtDate(s.oldest) : ""}">
+      <span>${esc(name)}</span><span class="n">${s.unread ? s.unread + " / " : ""}${s.total}</span></button>`;
+  $("sources").innerHTML = btn("", "All companies", all) + sources.map(s => (names[s.id] = s.name, btn(s.id, s.name, s))).join("");
+  const sel = $("year"), cur = sel.value;
+  sel.innerHTML = '<option value="">All years</option>' + years.map(y => `<option>${y}</option>`).join("");
+  sel.value = cur;
+}
+
+function postHTML(p) {
+  return `<div class="post ${p.is_read ? "read" : ""}" data-id="${p.id}">
+    <div class="body">
+      <div class="top"><span class="co">${esc(names[p.source] || p.source)}</span>
+        <span>${fmtDate(p.published)}</span>${p.author ? `<span>· ${esc(p.author)}</span>` : ""}</div>
+      <a class="title" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+      ${p.summary ? `<p>${esc(p.summary)}</p>` : ""}
+    </div>
+    <div class="icons">
+      <button class="icon ${p.saved ? "on" : ""}" data-act="saved" title="Save for later">${p.saved ? "★" : "☆"}</button>
+      <button class="icon" data-act="read" title="Toggle read">${p.is_read ? "●" : "○"}</button>
+    </div></div>`;
+}
+
+async function loadPosts(append = false) {
+  if (!append) state.offset = 0;
+  const qs = new URLSearchParams({ source: state.source, filter: state.filter, q: state.q,
+    year: state.year, offset: state.offset, limit: 50 });
+  const { total, posts } = await api("/api/posts?" + qs);
+  const html = posts.map(postHTML).join("");
+  if (append) $("list").insertAdjacentHTML("beforeend", html);
+  else $("list").innerHTML = html || `<div class="empty">No posts here yet. ${total === 0 && !state.q ?
+      "Click “Check for new posts” — the first fetch takes a minute." : ""}</div>`;
+  state.offset += posts.length;
+  $("count").textContent = `${total.toLocaleString()} posts`;
+  $("more").hidden = state.offset >= total;
+}
+
+async function mark(el, field, value) {
+  await api("/api/mark", { id: +el.dataset.id, field, value });
+  if (field === "read") {
+    el.classList.toggle("read", value);
+    el.querySelector('[data-act="read"]').textContent = value ? "●" : "○";
+  } else {
+    const b = el.querySelector('[data-act="saved"]');
+    b.classList.toggle("on", value); b.textContent = value ? "★" : "☆";
+  }
+  loadSources();
+}
+
+$("list").addEventListener("click", e => {
+  const post = e.target.closest(".post");
+  if (!post) return;
+  if (e.target.matches("a.title")) mark(post, "read", true);
+  const act = e.target.dataset.act;
+  if (act === "read") mark(post, "read", !post.classList.contains("read"));
+  if (act === "saved") mark(post, "saved", !e.target.classList.contains("on"));
+});
+$("list").addEventListener("auxclick", e => {  // middle-click opens count as read too
+  const post = e.target.closest(".post");
+  if (post && e.target.matches("a.title")) mark(post, "read", true);
+});
+$("sources").addEventListener("click", e => {
+  const b = e.target.closest(".src");
+  if (!b) return;
+  state.source = b.dataset.id;
+  $("side").classList.remove("open");
+  loadSources(); loadPosts();
+});
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+  state.filter = t.dataset.f; loadPosts();
+});
+let timer;
+$("q").oninput = e => { clearTimeout(timer); timer = setTimeout(() => { state.q = e.target.value.trim(); loadPosts(); }, 250); };
+$("year").onchange = e => { state.year = e.target.value; loadPosts(); };
+$("more").onclick = () => loadPosts(true);
+$("menu").onclick = () => $("side").classList.toggle("open");
+$("markall").onclick = async () => {
+  const where = state.source ? names[state.source] : "every company";
+  if (!confirm(`Mark all posts from ${where} as read?`)) return;
+  await api("/api/mark", { field: "read", all_unread: true, source: state.source });
+  loadSources(); loadPosts();
+};
+$("refresh").onclick = () => api("/api/refresh", {}).then(pollStatus);
+$("backfill").onclick = () => api("/api/backfill", {}).then(pollStatus);
+
+let wasRunning = false;
+async function pollStatus() {
+  const s = await api("/api/status");
+  $("status").textContent = s.message + (s.last_refresh && !s.running ? ` · last check ${new Date(s.last_refresh).toLocaleTimeString()}` : "");
+  $("refresh").disabled = $("backfill").disabled = !!s.running;
+  if (s.running) { wasRunning = true; loadSources(); setTimeout(pollStatus, 1500); }
+  else if (wasRunning) { wasRunning = false; loadSources(); loadPosts(); }
+}
+
+loadSources().then(() => loadPosts());
+pollStatus();
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+[
+  {"id": "meta",       "name": "Meta",        "feed": "https://engineering.fb.com/feed/", "paged": true},
+  {"id": "netflix",    "name": "Netflix",     "feed": "https://netflixtechblog.com/feed",
+   "sitemap": "https://netflixtechblog.com/sitemap/sitemap.xml", "sitemap_include": "^https://netflixtechblog\\.com/[a-z0-9-]+-[0-9a-f]{10,12}$"},
+  {"id": "airbnb",     "name": "Airbnb",      "feed": "https://medium.com/feed/airbnb-engineering"},
+  {"id": "cloudflare", "name": "Cloudflare",  "feed": "https://blog.cloudflare.com/rss/",
+   "sitemap": "https://blog.cloudflare.com/sitemap.xml", "sitemap_child_include": "sitemap-posts",
+   "sitemap_include": "^https://blog\\.cloudflare\\.com/[a-z0-9-]+/?$", "enrich": true},
+  {"id": "stripe",     "name": "Stripe",      "feed": "https://stripe.com/blog/feed.rss"},
+  {"id": "aws",        "name": "AWS Architecture", "feed": "https://aws.amazon.com/blogs/architecture/feed/"},
+  {"id": "github",     "name": "GitHub",      "feed": "https://github.blog/engineering/feed/", "paged": true},
+  {"id": "slack",      "name": "Slack",       "feed": "https://slack.engineering/feed/", "paged": true},
+  {"id": "discord",    "name": "Discord",     "feed": "https://discord.com/blog/rss.xml"},
+  {"id": "dropbox",    "name": "Dropbox",     "feed": "https://dropbox.tech/feed"},
+  {"id": "spotify",    "name": "Spotify",     "feed": "https://engineering.atspotify.com/feed/"},
+  {"id": "pinterest",  "name": "Pinterest",   "feed": "https://medium.com/feed/pinterest-engineering"},
+  {"id": "shopify",    "name": "Shopify",     "feed": "https://shopify.engineering/blog.atom"},
+  {"id": "google",     "name": "Google Developers", "feed": "https://developers.googleblog.com/feeds/posts/default"}
+]
