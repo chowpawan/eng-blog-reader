@@ -1,7 +1,11 @@
 # Engineering Reader
 
-One feed for engineering blogs from Meta, Netflix, Airbnb, Cloudflare, Stripe, AWS, GitHub,
-Slack, Discord, Dropbox, Spotify, Pinterest, Shopify and Google — including their archives.
+One feed for 35 engineering blogs — Meta, Netflix, Airbnb, Cloudflare, Stripe, AWS, GitHub, Slack, Discord,
+Dropbox, Spotify, Pinterest, Shopify, Google, Google Research, Microsoft, Apple ML, NVIDIA, OpenAI, Hugging Face,
+Lyft, Instacart, Booking.com, Square, Etsy, Figma, Canva, Salesforce, Mozilla, Snap, Yelp, Grab, Zalando, Walmart
+and Expedia — including their archives.
+
+Not included: Uber (its blog rejects non-browser requests) and LinkedIn (its robots.txt disallows all crawlers).
 
 **Live site:** https://chowpawan.github.io/eng-blog-reader/
 
