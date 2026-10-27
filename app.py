@@ -48,7 +48,8 @@ def load_sources():
 # ---------- storage ----------
 # posts.json keeps short keys to stay small: s=source u=url t=title d=summary a=author p=published
 # x marks a post known only from a sitemap or listing page: 1 = shown with a URL-derived title and
-# approximate date, 2 = hidden until its page is read for details, 3 = page had no usable details (stays hidden).
+# approximate date, 2 = hidden until its page is read for details, 3 = page had no usable details after 3
+# tries (stays hidden); n counts those tries.
 
 def key(url):
     """Same post with and without a trailing slash counts once."""
@@ -323,9 +324,11 @@ def enrich(store, source):
             p.update(t=title, d=clean_summary(meta_content(page, "og:description")),
                      a=meta_content(page, "author"), p=published)
             p.pop("x", None)
+            p.pop("n", None)
             done += 1
-        else:
-            p["x"] = 3  # not a post (e.g. a category page), or no date to show
+        else:  # not a post (e.g. a category page), no date, or a temporary error page; give up after 3 runs
+            p["n"] = p.get("n", 0) + 1
+            p["x"] = 3 if p["n"] >= 3 else 2
         time.sleep(POLITE_DELAY)
     left = sum(1 for p in store.posts.values() if p["s"] == source["id"] and p.get("x") in (1, 2))
     log(f"Details: {source['name']} {done} posts updated, {left} left")
