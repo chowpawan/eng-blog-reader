@@ -311,10 +311,19 @@ def enrich(store, source):
     """Sitemaps and listing pages only give URLs; read each post's page once for its real title and date."""
     pending = [p for p in store.posts.values() if p["s"] == source["id"] and p.get("x") in (1, 2)]
     done = 0
+    streak = []  # consecutive misses; a run of them usually means the site is rate-limiting us
     for p in pending[:MAX_ENRICH_PER_RUN]:
+        if len(streak) >= 5:
+            for q, counted in streak:  # don't hold a rate limit against these posts
+                if counted:
+                    q["n"] -= 1
+                    q["x"] = 2
+            log(f"Details: {source['name']} stopped early, looks rate-limited")
+            break
         try:
             page = fetch(p["u"]).decode("utf-8", "replace")
         except Exception:
+            streak.append((p, False))
             continue  # retried next run
         title = meta_content(page, "og:title") or html.unescape((re.search(r"<title>([^<]*)", page) or [0, ""])[1]).strip()
         title = re.sub(r"\s*(?:\||-|–|—)\s*[^|–—]{0,40}(?:Blog|Engineering|Amazon Web Services)\s*$", "", title)
@@ -326,9 +335,11 @@ def enrich(store, source):
             p.pop("x", None)
             p.pop("n", None)
             done += 1
+            streak = []
         else:  # not a post (e.g. a category page), no date, or a temporary error page; give up after 3 runs
             p["n"] = p.get("n", 0) + 1
             p["x"] = 3 if p["n"] >= 3 else 2
+            streak.append((p, True))
         time.sleep(POLITE_DELAY)
     left = sum(1 for p in store.posts.values() if p["s"] == source["id"] and p.get("x") in (1, 2))
     log(f"Details: {source['name']} {done} posts updated, {left} left")
