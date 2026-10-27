@@ -28,5 +28,6 @@ python3 app.py serve    # local copy at http://localhost:8787, updates hourly
 ## Adding a blog
 
 Append to `sources.json`: `id`, `name`, `feed` are required. Optional: `paged` (WordPress `?paged=N` archives),
-`sitemap` + `sitemap_include` / `sitemap_child_include` regexes, and `enrich` (read each sitemap post's page
+`sitemap` + `sitemap_include` / `sitemap_child_include` regexes, `index` (listing pages such as a
+category page) + `index_include` regex for post links, and `enrich` (read each sitemap post's page
 once for its real title and date).

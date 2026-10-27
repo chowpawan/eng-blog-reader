@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 ROOT = Path(__file__).resolve().parent
 SITE = ROOT / "site"
@@ -195,8 +195,26 @@ def parse_sitemap(url, include, child_include, seen=None):
 
 
 def meta_content(page, prop):
-    m = re.search(r'<meta[^>]+(?:property|name)="%s"[^>]+content="([^"]*)"' % re.escape(prop), page)
-    return html.unescape(m.group(1)).strip() if m else ""
+    for tag in re.findall(r"<meta\b[^>]*>", page):
+        if re.search(r'(?:property|name)=["\']%s["\']' % re.escape(prop), tag):
+            m = re.search(r'content="([^"]*)"|content=\'([^\']*)\'', tag)
+            if m:
+                return html.unescape(m.group(1) or m.group(2) or "").strip()
+    return ""
+
+
+def page_date(page):
+    """Best-effort publish date from a post page: meta tag, JSON-LD, <time>, then a written date."""
+    for pattern in (None, r'"datePublished"\s*:\s*"([^"]+)"', r'<time[^>]+datetime="([^"]+)"'):
+        text = meta_content(page, "article:published_time") if pattern is None else \
+            (re.search(pattern, page) or [None, None])[1]
+        if parse_date(text):
+            return parse_date(text)
+    m = re.search(r"\b(January|February|March|April|May|June|July|August|September|October|November|December)"
+                  r" (\d{1,2}), (20\d\d)\b", page)
+    if m:
+        return datetime.strptime(" ".join(m.groups()), "%B %d %Y").strftime("%Y-%m-%dT%H:%M:%SZ")
+    return None
 
 
 # ---------- update ----------
@@ -234,6 +252,15 @@ def backfill(store):
                 total += store.add(s["id"], entries, from_sitemap=True)
             except Exception as e:
                 log(f"[sitemap] {s['name']}: {e}")
+        for index_url in s.get("index", []):  # listing pages, e.g. a blog's category page
+            try:
+                page = fetch(index_url).decode("utf-8", "replace")
+                links = {urljoin(index_url, h) for h in re.findall(r'href="([^"#?]+)"', page)}
+                entries = [{"url": u, "title": title_from_slug(u), "published": None}
+                           for u in sorted(links) if re.search(s["index_include"], u)]
+                total += store.add(s["id"], entries, from_sitemap=True)
+            except Exception as e:
+                log(f"[index] {s['name']}: {e}")
     log(f"Archives: {total} new posts")
     budget = MAX_ENRICH_PER_RUN
     for s in load_sources():
@@ -251,7 +278,7 @@ def enrich(store, source, budget):
         except Exception:
             continue  # retried next run
         title = meta_content(page, "og:title")
-        published = parse_date(meta_content(page, "article:published_time"))
+        published = page_date(page)
         if title and published:
             p.update(t=title, d=clean_summary(meta_content(page, "og:description")),
                      a=meta_content(page, "author"), p=published)
