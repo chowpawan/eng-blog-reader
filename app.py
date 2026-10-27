@@ -29,7 +29,7 @@ PORT = 8787
 USER_AGENT = "EngBlogReader/1.0 (personal RSS reader; +https://github.com/chowpawan/eng-blog-reader)"
 REFRESH_EVERY = 60 * 60  # seconds, serve mode only
 MAX_PAGES = 300
-MAX_ENRICH_PER_RUN = 1500  # keeps each scheduled run bounded; the rest continues next run
+MAX_ENRICH_PER_RUN = 700  # per blog; keeps each scheduled run bounded, the rest continues next run
 POLITE_DELAY = 0.5  # seconds between archive requests
 
 
@@ -47,16 +47,24 @@ def load_sources():
 
 # ---------- storage ----------
 # posts.json keeps short keys to stay small: s=source u=url t=title d=summary a=author p=published
-# x=1 marks a post known only from a sitemap (URL-derived title, approximate date).
+# x marks a post known only from a sitemap or listing page: 1 = shown with a URL-derived title and
+# approximate date, 2 = hidden until its page is read for details, 3 = page had no usable details (stays hidden).
+
+def key(url):
+    """Same post with and without a trailing slash counts once."""
+    return url.rstrip("/")
+
 
 class Store:
     def __init__(self):
         self.posts = {}
         if DATA_PATH.exists():
             for p in json.loads(DATA_PATH.read_text())["posts"]:
-                self.posts[p["u"]] = p
+                old = self.posts.get(key(p["u"]))
+                if old is None or (old.get("x") and not p.get("x")):  # keep the copy with real details
+                    self.posts[key(p["u"])] = p
 
-    def add(self, source_id, posts, from_sitemap=False):
+    def add(self, source_id, posts, from_sitemap=False, pending=False):
         """Add posts; returns how many URLs were new. Feed entries upgrade sitemap-only posts."""
         new = 0
         first_seen = None if from_sitemap else now_iso()  # some feeds omit dates
@@ -64,14 +72,14 @@ class Store:
             rec = {"s": source_id, "u": p["url"], "t": p["title"], "d": p.get("summary", ""),
                    "a": p.get("author", ""), "p": p.get("published") or first_seen}
             if from_sitemap:
-                rec["x"] = 1
-            old = self.posts.get(p["url"])
+                rec["x"] = 2 if pending else 1
+            old = self.posts.get(key(p["url"]))
             if old is None:
-                self.posts[p["url"]] = rec
+                self.posts[key(p["url"])] = rec
                 new += 1
             elif old.get("x") and not from_sitemap:
                 rec["p"] = p.get("published") or old["p"]
-                self.posts[p["url"]] = rec
+                self.posts[key(p["url"])] = rec
         return new
 
     def save(self):
@@ -203,13 +211,22 @@ def meta_content(page, prop):
     return ""
 
 
-def page_date(page):
-    """Best-effort publish date from a post page: meta tag, JSON-LD, <time>, then a written date."""
-    for pattern in (None, r'"datePublished"\s*:\s*"([^"]+)"', r'<time[^>]+datetime="([^"]+)"'):
-        text = meta_content(page, "article:published_time") if pattern is None else \
-            (re.search(pattern, page) or [None, None])[1]
+DATE_METAS = ("article:published_time", "publishDate", "publish_date", "date", "DC.date.issued")
+
+
+def page_date(page, url="", text_dates=False):
+    """Best-effort publish date: meta tags, JSON-LD, <time>, a /YYYY/MM/ URL, then (if allowed) a written date."""
+    candidates = [meta_content(page, name) for name in DATE_METAS] + [
+        (re.search(r'"datePublished"\s*:\s*"([^"]+)"', page) or [None, None])[1],
+        (re.search(r'<time[^>]+datetime="([^"]+)"', page) or [None, None])[1]]
+    for text in candidates:
         if parse_date(text):
             return parse_date(text)
+    m = re.search(r"/(20\d\d|19\d\d)/(\d\d)/(?:(\d\d)/)?", url)
+    if m:
+        return f"{m[1]}-{m[2]}-{m[3] or '01'}T00:00:00Z"
+    if not text_dates:  # a date written in the page text is often a different date, so it's opt-in
+        return None
     m = re.search(r"\b(January|February|March|April|May|June|July|August|September|October|November|December)"
                   r" (\d{1,2}), (20\d\d)\b", page)
     if m:
@@ -219,75 +236,99 @@ def page_date(page):
 
 # ---------- update ----------
 
+def feeds(source):
+    return source["feed"] if isinstance(source["feed"], list) else [source["feed"]]
+
+
 def refresh(store):
     total = 0
     for s in load_sources():
-        try:
-            total += store.add(s["id"], parse_feed(fetch(s["feed"])))
-        except Exception as e:  # one broken feed shouldn't stop the rest
-            log(f"[feed] {s['name']}: {e}")
+        for feed in feeds(s):
+            try:
+                total += store.add(s["id"], parse_feed(fetch(feed)))
+            except Exception as e:  # one broken feed shouldn't stop the rest
+                log(f"[feed] {s['name']}: {e}")
     log(f"Feeds: {total} new posts")
+
+
+def index_links(url, include):
+    page = fetch(url).decode("utf-8", "replace")
+    links = {urljoin(url, h) for h in re.findall(r'href="([^"#?]+)"', page)}
+    return [u for u in sorted(links) if re.search(include, u)]
 
 
 def backfill(store):
     total = 0
     for s in load_sources():
+        pending = bool(s.get("enrich"))
         if s.get("paged"):
-            sep = "&" if "?" in s["feed"] else "?"
-            for page in range(2, MAX_PAGES + 1):
-                try:
-                    posts = parse_feed(fetch(f"{s['feed']}{sep}paged={page}"))
-                except Exception:
-                    break  # past the last page (usually a 404)
-                new = store.add(s["id"], posts)
-                total += new
-                if not posts or new == 0:
-                    break
-                time.sleep(POLITE_DELAY)
+            for feed in feeds(s):
+                sep = "&" if "?" in feed else "?"
+                for page in range(2, MAX_PAGES + 1):
+                    try:
+                        posts = parse_feed(fetch(f"{feed}{sep}paged={page}"))
+                    except Exception:
+                        break  # past the last page (usually a 404)
+                    new = store.add(s["id"], posts)
+                    total += new
+                    if not posts or new == 0:
+                        break
+                    time.sleep(POLITE_DELAY)
         if s.get("sitemap"):
             try:
                 entries = [{"url": loc, "title": title_from_slug(loc), "published": parse_date(lastmod)}
                            for loc, lastmod in parse_sitemap(s["sitemap"], s.get("sitemap_include"),
                                                              s.get("sitemap_child_include"))]
-                total += store.add(s["id"], entries, from_sitemap=True)
+                total += store.add(s["id"], entries, from_sitemap=True, pending=pending)
             except Exception as e:
                 log(f"[sitemap] {s['name']}: {e}")
-        for index_url in s.get("index", []):  # listing pages, e.g. a blog's category page
-            try:
-                page = fetch(index_url).decode("utf-8", "replace")
-                links = {urljoin(index_url, h) for h in re.findall(r'href="([^"#?]+)"', page)}
-                entries = [{"url": u, "title": title_from_slug(u), "published": None}
-                           for u in sorted(links) if re.search(s["index_include"], u)]
-                total += store.add(s["id"], entries, from_sitemap=True)
-            except Exception as e:
-                log(f"[index] {s['name']}: {e}")
+        for index_url in s.get("index", []):  # listing pages; "{n}" pages through 2, 3, ... until one adds nothing
+            numbered = "{n}" in index_url
+            for n in range(2, MAX_PAGES + 1) if numbered else [None]:
+                try:
+                    links = index_links(index_url.format(n=n) if numbered else index_url, s["index_include"])
+                except Exception as e:
+                    if not numbered:
+                        log(f"[index] {s['name']}: {e}")
+                    break
+                entries = [{"url": u, "title": title_from_slug(u), "published": None} for u in links]
+                new = store.add(s["id"], entries, from_sitemap=True, pending=pending)
+                total += new
+                if numbered and new == 0:
+                    break
+                time.sleep(POLITE_DELAY)
     log(f"Archives: {total} new posts")
-    budget = MAX_ENRICH_PER_RUN
-    for s in load_sources():
-        if s.get("enrich"):
-            budget -= enrich(store, s, budget)
+    # Each blog is read one page at a time, but different blogs are read in parallel.
+    workers = [threading.Thread(target=enrich, args=(store, s)) for s in load_sources() if s.get("enrich")]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
 
 
-def enrich(store, source, budget):
-    """Sitemaps only give URLs and last-modified dates; read each page once for its real title and date."""
-    pending = [p for p in store.posts.values() if p["s"] == source["id"] and p.get("x")][:budget]
+def enrich(store, source):
+    """Sitemaps and listing pages only give URLs; read each post's page once for its real title and date."""
+    pending = [p for p in store.posts.values() if p["s"] == source["id"] and p.get("x") in (1, 2)]
     done = 0
-    for p in pending:
+    for p in pending[:MAX_ENRICH_PER_RUN]:
         try:
             page = fetch(p["u"]).decode("utf-8", "replace")
         except Exception:
             continue  # retried next run
-        title = meta_content(page, "og:title")
-        published = page_date(page)
+        title = meta_content(page, "og:title") or html.unescape((re.search(r"<title>([^<]*)", page) or [0, ""])[1]).strip()
+        title = re.sub(r"\s*(?:\||-|–|—)\s*[^|–—]{0,40}(?:Blog|Engineering|Amazon Web Services)\s*$", "", title)
+        title = re.sub(r"^Stripe Blog:\s*", "", title)
+        published = page_date(page, p["u"], source.get("text_dates", False))
         if title and published:
             p.update(t=title, d=clean_summary(meta_content(page, "og:description")),
                      a=meta_content(page, "author"), p=published)
             p.pop("x", None)
             done += 1
+        else:
+            p["x"] = 3  # not a post (e.g. a category page), or no date to show
         time.sleep(POLITE_DELAY)
-    left = sum(1 for p in store.posts.values() if p["s"] == source["id"] and p.get("x"))
+    left = sum(1 for p in store.posts.values() if p["s"] == source["id"] and p.get("x") in (1, 2))
     log(f"Details: {source['name']} {done} posts updated, {left} left")
-    return len(pending)
 
 
 def update():

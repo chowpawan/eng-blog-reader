@@ -219,7 +219,7 @@ $("markall").onclick = () => {
 fetch("posts.json", { cache: "no-cache" }).then(r => r.json()).then(data => {
   sources = data.sources;
   sources.forEach(s => names[s.id] = s.name);
-  posts = data.posts;
+  posts = data.posts.filter(p => !(p.x >= 2));  // x>=2: archive post still waiting for its real title/date
   posts.forEach(p => p._text = `${p.t} ${p.d} ${p.a}`.toLowerCase());
   const years = [...new Set(posts.map(p => (p.p || "").slice(0, 4)).filter(Boolean))].sort().reverse();
   $("year").insertAdjacentHTML("beforeend", years.map(y => `<option>${y}</option>`).join(""));
